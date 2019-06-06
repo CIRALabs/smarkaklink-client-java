@@ -3,6 +3,7 @@ package ca.cira.smarkaklink.crypto;
 import ca.cira.smarkaklink.EnvironmentException;
 import ca.cira.smarkaklink.util.RandomSequenceGenerator;
 
+import java.io.InputStream;
 import java.math.BigInteger;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.KeyPair;
@@ -11,6 +12,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.ECGenParameterSpec;
 
@@ -24,6 +26,8 @@ public class SmarkaklinkKeys {
 
     private KeyPair selfDevId;
     private Certificate selfDevIdCertificate;
+
+    private Certificate lDevIdCertificate;
 
     public SmarkaklinkKeys() {
         CertificateGenerator.initialize();
@@ -86,5 +90,9 @@ public class SmarkaklinkKeys {
     public Certificate getSelfDevIdCertificate() {
         return selfDevIdCertificate;
     }
+
+    public void setLDevIdCertificate(InputStream input) throws CertificateException {
+        CertificateFactory factory = CertificateFactory.getInstance("X.509");
+        lDevIdCertificate = factory.generateCertificate(input);
     }
 }
