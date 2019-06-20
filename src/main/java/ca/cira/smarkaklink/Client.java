@@ -22,6 +22,7 @@ import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.io.DataInputStream;
@@ -37,6 +38,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.UnrecoverableKeyException;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
@@ -46,11 +48,14 @@ import java.util.logging.Logger;
 public class Client {
 
     public final static Logger logger = Logger.getLogger("SMARKAKLINK");
+
     private final static int READ_TIMEOUT = 1500;
     private final static int CONNECT_TIMEOUT = 1500;
+    private final static String MASA_URL_EXTENSION_OID = "1.3.6.1.4.1.46930.2";
 
     private SmarkaklinkKeys smarkaklinkKeys;
     private String spnonce;
+    private String masaURL;
 
     public Client() throws EnvironmentException {
         smarkaklinkKeys = new SmarkaklinkKeys();
@@ -214,13 +219,13 @@ public class Client {
             os.writeBytes(jsonParam.toString());
             os.flush();
             os.close();
+            // Use the TLS cert to retrieve the MASA URL
+            retrieveMASAURL(httpConnection);
         } finally {
             if (httpConnection != null) {
                 httpConnection.disconnect();
             }
         }
-
-        // TODO: retrieve peer TLS cert and extract MASA URL from attribute
 
         int responseCode = httpConnection.getResponseCode();
         switch (responseCode) {
@@ -272,5 +277,18 @@ public class Client {
         return vr.getJSONObject("ietf-voucher-request:voucher").getString("nonce").equals(spnonce);
     }
 
-
+    /**
+     * Given an open {@link HttpsURLConnection}, retrieve the MASA URL in the server's certificate extension
+     */
+    private void retrieveMASAURL(HttpsURLConnection connection) throws SSLPeerUnverifiedException {
+        Certificate[] certs = connection.getServerCertificates();
+        if (certs.length < 1) {
+            // Well, we really have a problem here!
+            throw new RuntimeException("AR has certificate chain with 0 certificates");
+        }
+        X509Certificate arCertificate = (X509Certificate)certs[0];
+        // FIXME: We should not have to substring here
+        masaURL = new String(arCertificate.getExtensionValue(MASA_URL_EXTENSION_OID)).substring(4);
+        logger.info("MASA located at " + masaURL);
+    }
 }
