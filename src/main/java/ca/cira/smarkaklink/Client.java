@@ -4,6 +4,8 @@ import ca.cira.smarkaklink.crypto.SmarkaklinkKeys;
 import org.json.JSONObject;
 
 import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
@@ -13,7 +15,10 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.KeyManagementException;
+import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
@@ -27,11 +32,11 @@ public class Client {
 
     private SmarkaklinkKeys smarkaklinkKeys;
 
-    public Client() {
+    public Client() throws EnvironmentException {
         smarkaklinkKeys = new SmarkaklinkKeys();
     }
 
-    public void initialize() throws EnvironmentException, CertificateException {
+    public void initialize() throws EnvironmentException, CertificateException, KeyStoreException {
         smarkaklinkKeys.generateSelfDevId();
     }
 
@@ -53,23 +58,46 @@ public class Client {
         };
     }
 
-    public boolean enrollWithManufacturer(URL manufacturerURL) throws UnexpectedResponseException, IOException, EnvironmentException, CertificateException {
-        HttpURLConnection httpConnection = null;
-
+    private void setSSLContext(HttpsURLConnection connection) throws EnvironmentException {
         /* This should not be done with proper MASA certificate */
         try {
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
+            kmf.init(smarkaklinkKeys.getKeyStore(), "".toCharArray());
+            KeyManager[] keyManagers = kmf.getKeyManagers();
+
             // Disable certificate validation
             SSLContext sc = SSLContext.getInstance("SSL");
-            sc.init(null, getNoSecurityTrustManagers(), new java.security.SecureRandom());
-            HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+            sc.init(null, getNoSecurityTrustManagers(), new SecureRandom());
+            connection.setSSLSocketFactory(sc.getSocketFactory());
             // Create all-trusting host name verifier
-            HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
-        } catch (NoSuchAlgorithmException | KeyManagementException e) {
+            connection.setHostnameVerifier((hostname, session) -> true);
+        } catch (NoSuchAlgorithmException | KeyManagementException | UnrecoverableKeyException | KeyStoreException e) {
             throw new EnvironmentException("Cannot set SSL context", e);
         }
 
+    }
+
+
+    /**
+     * Execute the first step of the Smarkaklink specification: Enroll with the manufacturer.
+     * <p>
+     * In this step, the client will connect to the manufacturer and send its public key.
+     * The manufacturer will generate and sign a certificate based in this public key.
+     *
+     * @param manufacturerURL URL of the manufacturer, most likely retrieved from the QR code on the device.
+     * @return True if certificate has been retrieved, False otherwise.
+     * @throws UnexpectedResponseException when the server returns an unexpected response.
+     * @throws IOException                 when an error occurred when connecting to the manufacturer.
+     * @throws EnvironmentException        if there is an issue with the environment (mostly security/provider related).
+     * @throws CertificateException        if the SelfDevId certificate cannot be read.
+     */
+    public boolean enrollWithManufacturer(URL manufacturerURL) throws UnexpectedResponseException, IOException, EnvironmentException, CertificateException {
+        HttpsURLConnection httpConnection = null;
+
         try {
-            httpConnection = (HttpURLConnection) manufacturerURL.openConnection();
+            httpConnection = (HttpsURLConnection) manufacturerURL.openConnection();
+            setSSLContext(httpConnection);
+
             httpConnection.setRequestMethod("POST");
             httpConnection.setRequestProperty("Content-Type", "application/json");
             httpConnection.setRequestProperty("Accept", "application/pkcs7");

@@ -5,13 +5,14 @@ import org.testng.annotations.Test;
 
 import java.io.IOException;
 import java.net.URL;
+import java.security.KeyStoreException;
 import java.security.cert.CertificateException;
 
 public class ClientTest {
     private Client client;
 
     @BeforeTest
-    public void setup() throws EnvironmentException, CertificateException {
+    public void setup() throws EnvironmentException, CertificateException, KeyStoreException {
         client = new Client();
         client.initialize();
     }

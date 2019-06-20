@@ -6,6 +6,7 @@ import org.testng.annotations.BeforeTest;
 import org.testng.annotations.Test;
 
 import java.security.KeyPair;
+import java.security.KeyStoreException;
 import java.security.PublicKey;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
@@ -18,12 +19,12 @@ public class SmarkaklinkKeysTest {
     private SmarkaklinkKeys keys;
 
     @BeforeTest
-    public void setup() {
+    public void setup() throws EnvironmentException {
         keys = new SmarkaklinkKeys();
     }
 
     @Test
-    public void testGenerateIDevIdFromEther() throws EnvironmentException, CertificateException {
+    public void testGenerateIDevIdFromEther() throws EnvironmentException, CertificateException, KeyStoreException {
         keys.generateSelfDevId();
         KeyPair keyPair = keys.getSelfDevIdKeyPair();
 
