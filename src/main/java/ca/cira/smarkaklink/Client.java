@@ -1,8 +1,23 @@
 package ca.cira.smarkaklink;
 
 import ca.cira.smarkaklink.crypto.SmarkaklinkKeys;
+import ca.cira.smarkaklink.util.RandomSequenceGenerator;
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cms.CMSException;
+import org.bouncycastle.cms.CMSProcessableByteArray;
+import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.cms.SignerInformation;
+import org.bouncycastle.cms.SignerInformationStore;
+import org.bouncycastle.cms.SignerInformationVerifier;
+import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder;
+import org.bouncycastle.operator.OperatorCreationException;
+import org.bouncycastle.util.Store;
 import org.json.JSONObject;
 
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
@@ -12,16 +27,20 @@ import javax.net.ssl.X509TrustManager;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.InvalidKeyException;
 import java.security.KeyManagementException;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.logging.Logger;
 
 public class Client {
@@ -31,6 +50,7 @@ public class Client {
     private final static int CONNECT_TIMEOUT = 1500;
 
     private SmarkaklinkKeys smarkaklinkKeys;
+    private String spnonce;
 
     public Client() throws EnvironmentException {
         smarkaklinkKeys = new SmarkaklinkKeys();
@@ -129,13 +149,128 @@ public class Client {
             case HttpURLConnection.HTTP_OK:
                 smarkaklinkKeys.setLDevIdCertificate(new DataInputStream(httpConnection.getInputStream()));
                 break;
+            case HttpURLConnection.HTTP_NO_CONTENT:
+                // TODO: Retrieve cert at Location
+                // No break for now
             case HttpURLConnection.HTTP_MOVED_TEMP:
                 // TODO: Implement OAuth callback
                 // No break for now
             default:
-                throw new UnexpectedResponseException(responseCode);
+                throw new UnexpectedResponseException("manufacturer", responseCode);
         }
 
         return true;
     }
+
+    /**
+     * Execute the next step of the Smarkaklink specification:
+     * Pledge Requests Voucher-Request from the Adolescent Registrar.
+     * <p>
+     * In this step, the client will connect to the AR using its SelfDevId as a client certificate, and send it a
+     * random SPnonce, encrypted to the AR's public key (found in QR code).
+     * The AR will return a VoucherRequest object.
+     *
+     * @param arAddress URL of the AR.
+     * @param arKey     The public key found in the QR code.
+     * @throws InvalidKeyException when the arKey is not valid in the context (invalid algorithm or size).
+     */
+    public boolean fetchVoucherRequest(URL arAddress, PublicKey arKey) throws IOException, EnvironmentException, InvalidKeyException, CertificateException, UnexpectedResponseException {
+        HttpsURLConnection httpConnection = null;
+        spnonce = RandomSequenceGenerator.randomSequence(16);
+
+        byte[] encryptedSPnonce;
+
+        try {
+            Cipher cipher = Cipher.getInstance("ECIES");
+            cipher.init(Cipher.ENCRYPT_MODE, arKey);
+            encryptedSPnonce = cipher.doFinal(spnonce.getBytes());
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException e) {
+            throw new EnvironmentException("Cannot instantiate cipher instance", e);
+        } catch (BadPaddingException | IllegalBlockSizeException e) {
+            throw new EnvironmentException("Cannot encrypt SPnonce", e);
+        }
+
+        try {
+            httpConnection = (HttpsURLConnection) arAddress.openConnection();
+            setSSLContext(httpConnection);
+
+            httpConnection.setRequestMethod("POST");
+            httpConnection.setRequestProperty("Content-Type", "application/json");
+            httpConnection.setRequestProperty("Accept", "application/voucher-cms+json");
+            httpConnection.setDoOutput(true);
+            httpConnection.setDoInput(true);
+            httpConnection.setConnectTimeout(CONNECT_TIMEOUT);
+            httpConnection.setReadTimeout(READ_TIMEOUT);
+
+            JSONObject jsonParam = new JSONObject();
+            JSONObject vr = new JSONObject();
+            // FIXME: This does not validate in mud-supervisor...
+            // vr.put("voucher-challenge-nonce", spnonce);
+            vr.put("voucher-challenge-nonce", "AgQRXBZKtsAxJZmzrM_PUSq3W6lYZnSQ9Ufyv9RJuRIjRte_ojEQi6Ayxir8kPkInJ_nAcLATbtSUCviMSd9iyUA2-CZt3U_AlJDoD4jed3vuXRv2g==");
+
+            jsonParam.put("ietf:request-voucher-request", vr);
+
+            DataOutputStream os = new DataOutputStream(httpConnection.getOutputStream());
+            os.writeBytes(jsonParam.toString());
+            os.flush();
+            os.close();
+        } finally {
+            if (httpConnection != null) {
+                httpConnection.disconnect();
+            }
+        }
+
+        // TODO: retrieve peer TLS cert and extract MASA URL from attribute
+
+        int responseCode = httpConnection.getResponseCode();
+        switch (responseCode) {
+            case HttpURLConnection.HTTP_NOT_FOUND:
+            case HttpURLConnection.HTTP_BAD_REQUEST:
+                logger.warning("AR refuses smarkaklink voucher request request: " + httpConnection.getResponseMessage());
+                return false;
+            case HttpURLConnection.HTTP_OK:
+                try {
+                    return processRequestVoucherRequestResponse(httpConnection.getInputStream());
+                } catch (CMSException | OperatorCreationException e) {
+                    throw new UnexpectedResponseException("AR", e.getMessage());
+                }
+            default:
+                throw new UnexpectedResponseException("AR", responseCode);
+        }
+
+    }
+
+    /**
+     * Process a request-voucher-request response from the AR.
+     */
+    private boolean processRequestVoucherRequestResponse(InputStream response) throws CMSException, CertificateException, OperatorCreationException, IOException {
+        CMSSignedData s = new CMSSignedData(response);
+        SignerInformationStore signers = s.getSignerInfos();
+        Store<X509CertificateHolder> certs = s.getCertificates();
+        boolean verified = false;
+
+        for (SignerInformation signer : signers.getSigners()) {
+            @SuppressWarnings("unchecked")
+            Collection<X509CertificateHolder> certCollection = certs.getMatches(signer.getSID());
+            if (!certCollection.isEmpty()) {
+                X509CertificateHolder cert = certCollection.iterator().next();
+                JcaSimpleSignerInfoVerifierBuilder verifier = new JcaSimpleSignerInfoVerifierBuilder();
+                SignerInformationVerifier siv = verifier.build(cert);
+                if (signer.verify(siv)) {
+                    verified = true;
+                    break;
+                }
+            }
+        }
+        if (!verified) {
+            logger.warning("Cannot verify signature on returned voucher request object");
+            return false;
+        }
+        CMSProcessableByteArray signedContent = (CMSProcessableByteArray) s.getSignedContent();
+        String content = new String(signedContent.getInputStream().readAllBytes());
+        JSONObject vr = new JSONObject(content);
+        return vr.getJSONObject("ietf-voucher-request:voucher").getString("nonce").equals(spnonce);
+    }
+
+
 }
