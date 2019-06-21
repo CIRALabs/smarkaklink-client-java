@@ -16,6 +16,7 @@ import java.security.NoSuchProviderException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.ECGenParameterSpec;
 
@@ -28,8 +29,8 @@ public class SmarkaklinkKeys {
     private static final String CURVE = "prime256v1";
     private final KeyStore keyStore;
     private KeyPair selfDevId;
-    private Certificate selfDevIdCertificate;
-    private Certificate lDevIdCertificate;
+    private X509Certificate selfDevIdCertificate;
+    private X509Certificate lDevIdCertificate;
 
 
     public SmarkaklinkKeys() throws EnvironmentException {
@@ -110,7 +111,7 @@ public class SmarkaklinkKeys {
 
     public void setLDevIdCertificate(InputStream input) throws CertificateException {
         CertificateFactory factory = CertificateFactory.getInstance("X.509");
-        lDevIdCertificate = factory.generateCertificate(input);
+        lDevIdCertificate = (X509Certificate) factory.generateCertificate(input);
     }
 
     public KeyStore getKeyStore() {

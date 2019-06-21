@@ -38,5 +38,6 @@ public class ClientTest {
         PublicKey arKey = kf.generatePublic(spec);
 //        Assert.assertTrue(client.fetchVoucherRequest(new URL("https://127.0.0.1:8443/.well-known/est/requestvoucherrequest"), arKey));
         client.fetchVoucherRequest(new URL("https://127.0.0.1:8443/.well-known/est/requestvoucherrequest"), arKey);
+        client.requestVoucher();
     }
 }

@@ -3,14 +3,21 @@ package ca.cira.smarkaklink;
 import ca.cira.smarkaklink.crypto.SmarkaklinkKeys;
 import ca.cira.smarkaklink.util.RandomSequenceGenerator;
 import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.jcajce.JcaCertStore;
 import org.bouncycastle.cms.CMSException;
 import org.bouncycastle.cms.CMSProcessableByteArray;
 import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.cms.CMSSignedDataGenerator;
+import org.bouncycastle.cms.CMSTypedData;
 import org.bouncycastle.cms.SignerInformation;
 import org.bouncycastle.cms.SignerInformationStore;
 import org.bouncycastle.cms.SignerInformationVerifier;
+import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder;
 import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder;
+import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.OperatorCreationException;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
 import org.bouncycastle.util.Store;
 import org.json.JSONObject;
 
@@ -27,9 +34,11 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.security.InvalidKeyException;
 import java.security.KeyManagementException;
@@ -39,10 +48,13 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.List;
 import java.util.logging.Logger;
 
 public class Client {
@@ -55,6 +67,7 @@ public class Client {
 
     private SmarkaklinkKeys smarkaklinkKeys;
     private String spnonce;
+    private JSONObject voucherRequest;
     private String masaURL;
 
     public Client() throws EnvironmentException {
@@ -245,6 +258,49 @@ public class Client {
 
     }
 
+    public void requestVoucher() throws IOException, EnvironmentException, UnexpectedResponseException {
+        HttpsURLConnection httpConnection = null;
+
+        try {
+            URL masaVoucherRequestURL = new URL("https://" + masaURL + "/.well-known/est/requestvoucher");
+            httpConnection = (HttpsURLConnection) masaVoucherRequestURL.openConnection();
+            setSSLContext(httpConnection);
+
+            httpConnection.setRequestMethod("POST");
+            httpConnection.setRequestProperty("Content-Type", "application/voucher-cms+json");
+            httpConnection.setRequestProperty("Accept", "application/voucher-cms+json");
+            httpConnection.setDoOutput(true);
+            httpConnection.setDoInput(true);
+            httpConnection.setConnectTimeout(CONNECT_TIMEOUT);
+            httpConnection.setReadTimeout(READ_TIMEOUT);
+
+            DataOutputStream os = new DataOutputStream(httpConnection.getOutputStream());
+            byte[] smime = Base64.getUrlEncoder().encode(generateVoucherRequest().getEncoded());
+            os.write(smime, 0, smime.length);
+            os.flush();
+            os.close();
+        } catch (MalformedURLException | CertificateEncodingException | OperatorCreationException | CMSException e) {
+            e.printStackTrace();
+        } finally {
+            if (httpConnection != null) {
+                httpConnection.disconnect();
+            }
+        }
+
+        int responseCode = httpConnection.getResponseCode();
+        switch (responseCode) {
+            case HttpURLConnection.HTTP_NOT_FOUND:
+            case HttpURLConnection.HTTP_BAD_REQUEST:
+                logger.warning("MASA refuses voucher request: " + httpConnection.getResponseMessage());
+                break;
+            case HttpURLConnection.HTTP_OK:
+                break;
+            default:
+                throw new UnexpectedResponseException("MASA", responseCode);
+        }
+
+    }
+
     /**
      * Process a request-voucher-request response from the AR.
      */
@@ -273,8 +329,47 @@ public class Client {
         }
         CMSProcessableByteArray signedContent = (CMSProcessableByteArray) s.getSignedContent();
         String content = new String(signedContent.getInputStream().readAllBytes());
-        JSONObject vr = new JSONObject(content);
-        return vr.getJSONObject("ietf-voucher-request:voucher").getString("nonce").equals(spnonce);
+        voucherRequest = new JSONObject(content);
+        return voucherRequest.getJSONObject("ietf-voucher-request:voucher").getString("nonce").equals(spnonce);
+    }
+
+    /**
+     * Wrap the voucher request received from the AR in order to send it to MASA.
+     *
+     * @return a wrapped, signed, voucher request.
+     */
+    private CMSSignedData generateVoucherRequest() throws CertificateEncodingException, OperatorCreationException, CMSException {
+        JSONObject wrappedVoucherRequest = new JSONObject();
+
+        wrappedVoucherRequest.put("assertion", "proximity");
+        wrappedVoucherRequest.put("priorSignedType", "cmsSigned");
+
+        System.out.println("Message: " + wrappedVoucherRequest.toString());
+        CMSTypedData msg = new CMSProcessableByteArray(wrappedVoucherRequest.toString().getBytes());
+
+        List<X509Certificate> certList = new ArrayList<>();
+        X509Certificate signingCert = (X509Certificate) smarkaklinkKeys.getSelfDevIdCertificate();
+        certList.add(signingCert);
+        Store certs = new JcaCertStore(certList);
+
+        CMSSignedDataGenerator gen = new CMSSignedDataGenerator();
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withECDSA").build(smarkaklinkKeys.getSelfDevIdKeyPair().getPrivate());
+
+        gen.addSignerInfoGenerator(new JcaSignerInfoGeneratorBuilder(new JcaDigestCalculatorProviderBuilder().build()).build(signer, signingCert));
+
+        gen.addCertificates(certs);
+
+        CMSSignedData data = gen.generate(msg, true);
+        try {
+            byte[] b = data.getEncoded();
+            try (FileOutputStream fos = new FileOutputStream("/tmp/toto")) {
+                fos.write(b);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return data;
     }
 
     /**
@@ -286,7 +381,7 @@ public class Client {
             // Well, we really have a problem here!
             throw new RuntimeException("AR has certificate chain with 0 certificates");
         }
-        X509Certificate arCertificate = (X509Certificate)certs[0];
+        X509Certificate arCertificate = (X509Certificate) certs[0];
         // FIXME: We should not have to substring here
         masaURL = new String(arCertificate.getExtensionValue(MASA_URL_EXTENSION_OID)).substring(4);
         logger.info("MASA located at " + masaURL);

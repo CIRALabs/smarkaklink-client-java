@@ -22,6 +22,7 @@ import java.security.Provider;
 import java.security.Security;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.Calendar;
 import java.util.Date;
 
@@ -48,7 +49,7 @@ public class CertificateGenerator {
      * @throws CertificateException if the conversion is unable to be made.
      * @throws EnvironmentException if there is an issue with the environment (mostly security/provider related).
      */
-    public static Certificate selfSign(KeyPair keyPair, String subjectDN, BigInteger serialNumber) throws CertificateException, EnvironmentException {
+    public static X509Certificate selfSign(KeyPair keyPair, String subjectDN, BigInteger serialNumber) throws CertificateException, EnvironmentException {
         long now = System.currentTimeMillis();
         Date startDate = new Date(now);
 
