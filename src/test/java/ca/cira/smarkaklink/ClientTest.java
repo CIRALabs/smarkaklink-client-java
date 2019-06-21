@@ -32,7 +32,8 @@ public class ClientTest {
     }
 
     @Test
-    public void testFetchVoucherRequest() throws IOException, OperatorCreationException, EnvironmentException, UnexpectedResponseException, InvalidKeyException, CMSException, NoSuchAlgorithmException, InvalidKeySpecException, CertificateException {
+    public void testFetchVoucherRequest() throws IOException, EnvironmentException, UnexpectedResponseException, InvalidKeyException, NoSuchAlgorithmException, InvalidKeySpecException, CertificateException {
+        // This is the public key of Smarkaklink-n3ce618
         X509EncodedKeySpec spec = new X509EncodedKeySpec(Base64.getDecoder().decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEc7Vr983Ya8xiFvLAA2wgNH0fgGwUA6FGsN5yzkDIYoXQRwLwa2RSkLRluJ8/RGQzUBAOQVe1HMrJijdteV0hJA=="));
         KeyFactory kf = KeyFactory.getInstance("ECDSA");
         PublicKey arKey = kf.generatePublic(spec);

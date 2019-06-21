@@ -211,6 +211,7 @@ public class Client {
             JSONObject vr = new JSONObject();
             // FIXME: This does not validate in mud-supervisor...
             // vr.put("voucher-challenge-nonce", spnonce);
+            // FIXME: For now, use an hardcoded SPnonce to the public key of Smarkaklink-n3ce618
             vr.put("voucher-challenge-nonce", "AgQRXBZKtsAxJZmzrM_PUSq3W6lYZnSQ9Ufyv9RJuRIjRte_ojEQi6Ayxir8kPkInJ_nAcLATbtSUCviMSd9iyUA2-CZt3U_AlJDoD4jed3vuXRv2g==");
 
             jsonParam.put("ietf:request-voucher-request", vr);
